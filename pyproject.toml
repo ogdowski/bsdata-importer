@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bsdata-importer"
+version = "0.1.0"
+description = "Importer danych o jednostkach wargamingowych: BSData (XML/JSON), MFM 40k, PDF-y (MFM/dataslate/bazy)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+pdf = ["pdfplumber"]
+
+[project.scripts]
+bsdata-importer = "bsdata_importer:main"
+
+[project.urls]
+Repository = "https://github.com/ogdowski/bsdata-importer"
+
+[tool.setuptools]
+py-modules = ["bsdata_importer"]

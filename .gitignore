@@ -1,0 +1,14 @@
+# IDE
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# artefakty działania
+data.db
+*.json.bak
+export.json
+40k.json
+aos.json

@@ -1,0 +1,15 @@
+{
+  "default": {
+    "keywords": true,
+    "weapons": true,
+    "abilities": true,
+    "stats": true,
+    "costs": true
+  },
+  "killteam": {
+    "costs": false
+  },
+  "oldworld": {
+    "abilities": false
+  }
+}
