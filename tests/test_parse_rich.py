@@ -46,7 +46,7 @@ CATALOGUE = textwrap.dedent(f"""\
 
 
 def test_rich_resolves_links_rules_and_nesting():
-    game = BUILTIN_GAMES["40k-10e"]
+    game = BUILTIN_GAMES["40k"]
     faction, units = parse_catalogue_rich(
         CATALOGUE, game, qualify_profile_type="Unit")
 
@@ -63,6 +63,6 @@ def test_rich_resolves_links_rules_and_nesting():
 
 
 def test_rich_without_qualifier_keeps_profileless_units():
-    game = BUILTIN_GAMES["40k-10e"]
+    game = BUILTIN_GAMES["40k"]
     _, units = parse_catalogue_rich(CATALOGUE, game)
     assert {u.name for u in units} == {"Grunt", "Empty"}

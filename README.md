@@ -1,6 +1,6 @@
 # bsdata-importer
 
-Unit data importer for wargaming apps. Three sources: BSData repositories (stats, costs, keywords), the scraped official 40k MFM (points land faster than `.cat` updates) and PDFs (MFM / Balance Dataslate / base size guides). Results go into SQLite (`data.db`), with JSON export.
+Unit data importer for wargaming apps. The data source is the community [BSData](https://github.com/BSData) repositories (stats, costs, keywords).
 
 ## Installation
 
@@ -27,21 +27,20 @@ The module can also be imported directly: `from bsdata_importer import load_game
 | key | game | repo |
 |---|---|---|
 | `40k` | Warhammer 40,000 (11th) | BSData/wh40k-11e (JSON format!) |
-| `40k-10e` | Warhammer 40,000 (10th) | BSData/wh40k-10e |
 | `aos` | Age of Sigmar (4th) | BSData/age-of-sigmar-4th |
 | `heresy` | Horus Heresy (3rd) | BSData/horus-heresy-3rd-edition |
-| `heresy-2e` | Horus Heresy (2nd) | BSData/horus-heresy-2nd-edition |
 | `killteam` | Kill Team | BSData/wh40k-killteam (branch `master`) |
 | `oldworld` | The Old World | Birddie721/TOW (BSData does not host TOW; community repo) |
 
+Only current editions are built in. Older editions (e.g. 40k 10th) can be
+defined per app via `games.json` or by constructing a `Game` directly.
+
 ## Typical workflow
+
+Results go into SQLite (`data.db`), with JSON export:
 
 ```bash
 python bsdata_importer.py fetch 40k          # stats + costs from BSData
-python bsdata_importer.py mfm-live           # current 40k points (scraped official MFM)
-python bsdata_importer.py pdf dataslate.pdf --game 40k --kind points --source ds-2026-06
-python bsdata_importer.py pdf bases.pdf --game 40k --kind bases
-python bsdata_importer.py apply-points 40k   # fuzzy-merge points/bases into units
 python bsdata_importer.py export --game 40k -o 40k.json
 ```
 
@@ -53,8 +52,6 @@ python bsdata_importer.py export --game 40k --no-legends --exclude "path to glor
 ```
 
 `--no-legends` drops units marked as Legends: the `Legends` keyword (AoS), `[LEGENDS]`/`(Legends)` catalogues and the `legends: true` flag from the MFM (propagated onto units by `apply-points`). `--exclude PATTERN` (repeatable, case-insensitive) filters by a fragment of the faction name or a keyword — BSData has no universal "narrative" marker, so you cut narrative content with a pattern that fits the given game. Every filter prints how much it removed, so you immediately see whether the pattern hit.
-
-`apply-points` overwrites `points_current` with the freshest source (fuzzy name matching, 0.87 cutoff, diacritics normalized). The original bsdata cost stays in `costs.pts`, so the bsdata vs MFM/dataslate difference is always visible.
 
 ## What to import — import_config.json
 
@@ -68,6 +65,13 @@ Instead of CLI flags: a JSON file with true/false switches per category (`keywor
 ```
 
 A flat format is also accepted: `{ "weapons": false }`.
+
+## Extra sources (optional)
+
+Beyond BSData, points and base sizes can be layered in from the scraped
+official 40k MFM (`mfm-live`) or from PDFs (`pdf --kind points|bases`),
+then fuzzy-merged into units with `apply-points` (0.87 name cutoff,
+diacritics normalized; the original bsdata cost stays in `costs.pts`).
 
 ## Adding a new game
 

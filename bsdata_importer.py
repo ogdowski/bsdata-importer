@@ -68,12 +68,12 @@ class Game:
     )
 
 
+# tylko biezace edycje — starsze (10e, heresy 2nd) definiuj per aplikacja
+# przez games.json albo konstruujac Game bezposrednio
 BUILTIN_GAMES: dict[str, Game] = {
     "40k": Game("40k", "BSData/wh40k-11e", label="Warhammer 40,000 (11th)"),
-    "40k-10e": Game("40k-10e", "BSData/wh40k-10e", label="Warhammer 40,000 (10th)"),
     "aos": Game("aos", "BSData/age-of-sigmar-4th", label="Age of Sigmar (4th)"),
     "heresy": Game("heresy", "BSData/horus-heresy-3rd-edition", label="Horus Heresy (3rd)"),
-    "heresy-2e": Game("heresy-2e", "BSData/horus-heresy-2nd-edition", label="Horus Heresy (2nd)"),
     "killteam": Game("killteam", "BSData/wh40k-killteam", branch="master", label="Kill Team"),
     "oldworld": Game("oldworld", "Birddie721/TOW", label="WH: The Old World (community)"),
 }
