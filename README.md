@@ -118,7 +118,9 @@ team, units = parse_catalogue_rich(xml, game, qualify_profile_type="Operative")
   `"Unit"` in 40k/AoS, `"Operative"` in Kill Team);
 - entries nested inside another candidate are dropped (unit sub-models);
 - categories may contain duplicates (an artifact of links) — the consumer
-  turns them into a set.
+  turns them into a set;
+- both catalogue formats are handled — XML (`.cat`/`.gst`) and JSON
+  (BSData 11e) — with the format auto-detected from the payload.
 
 Unit selection (whitelists, duplicate merging, faction mapping, base sizes
 from external tables) deliberately does NOT go into the package — those are

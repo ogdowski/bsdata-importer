@@ -289,7 +289,7 @@ def resolve_subtree(entry, by_id: dict) -> list:
 
 
 def parse_catalogue_rich(
-    xml_bytes: bytes, game: Game, *, qualify_profile_type: str | None = None,
+    data: bytes, game: Game, *, qualify_profile_type: str | None = None,
 ) -> tuple[str, list[ParsedUnit]]:
     """Jak parse_catalogue, ale dla aplikacji potrzebujących pełnego obrazu
     jednostki:
@@ -299,7 +299,16 @@ def parse_catalogue_rich(
         profil o typeName == qualify_profile_type (None = bez kwalifikacji),
       - wpisy zagnieżdżone w innym kandydacie odpadają (sub-modele),
       - rules lądują w unit.rules (np. '<rule name="Base Size">' w AoS).
-    Kategorie mogą się powtarzać (linki) — konsument robi z nich zbiór."""
+    Kategorie mogą się powtarzać (linki) — konsument robi z nich zbiór.
+    Format wykrywany automatycznie: XML (.cat/.gst) albo JSON (BSData 11e)."""
+    if data.lstrip()[:1] == b"{":
+        return _parse_rich_json(data, game, qualify_profile_type)
+    return _parse_rich_xml(data, game, qualify_profile_type)
+
+
+def _parse_rich_xml(
+    xml_bytes: bytes, game: Game, qualify_profile_type: str | None,
+) -> tuple[str, list[ParsedUnit]]:
     root = ET.fromstring(xml_bytes)
     faction = root.get("name", "?")
     by_id = index_by_id(root)
@@ -365,6 +374,118 @@ def parse_catalogue_rich(
                     "name": el.get("name", ""),
                     "description": ((desc.text or "").strip()
                                     if desc is not None else ""),
+                })
+        units.append(unit)
+
+    return faction, units
+
+
+# klucz kontenera, pod którym w JSON żyje cel linku danego typu
+_LINK_CONTAINER = {"profile": "profiles", "rule": "rules",
+                   "selectionEntry": "selectionEntries"}
+
+
+def _index_json_ids(obj, idx: dict) -> None:
+    if isinstance(obj, dict):
+        if isinstance(obj.get("id"), str):
+            idx[obj["id"]] = obj
+        for v in obj.values():
+            _index_json_ids(v, idx)
+    elif isinstance(obj, list):
+        for v in obj:
+            _index_json_ids(v, idx)
+
+
+def _walk_json(obj, follow_links: bool, by_id: dict, seen: set, key=None):
+    """(klucz_kontenera, dict) dla każdego dicta poddrzewa; follow_links
+    dokłada cele targetId (cycle-safe) — JSON-owy odpowiednik resolve_subtree."""
+    if isinstance(obj, dict):
+        if id(obj) in seen:
+            return
+        seen.add(id(obj))
+        yield key, obj
+        if follow_links:
+            target = by_id.get(obj.get("targetId"))
+            if target is not None:
+                yield from _walk_json(target, follow_links, by_id, seen,
+                                      _LINK_CONTAINER.get(obj.get("type")))
+        for k, v in obj.items():
+            yield from _walk_json(v, follow_links, by_id, seen, k)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk_json(v, follow_links, by_id, seen, key)
+
+
+def _parse_rich_json(
+    json_bytes: bytes, game: Game, qualify_profile_type: str | None,
+) -> tuple[str, list[ParsedUnit]]:
+    doc = json.loads(json_bytes)
+    root = doc.get("catalogue") or doc.get("gameSystem") or {}
+    faction = root.get("name", "?")
+    by_id: dict = {}
+    _index_json_ids(root, by_id)
+
+    def is_candidate(obj) -> bool:
+        return obj.get("type") in game.unit_types and "name" in obj
+
+    candidates = [obj for _, obj in _walk_json(root, False, by_id, set())
+                  if is_candidate(obj)]
+
+    qualified, subtrees = [], {}
+    for cand in candidates:
+        elements = list(_walk_json(cand, True, by_id, set()))
+        if qualify_profile_type is not None and not any(
+            o.get("typeName") == qualify_profile_type for _, o in elements
+        ):
+            continue
+        qualified.append(cand)
+        subtrees[id(cand)] = elements
+
+    nested = set()
+    for cand in qualified:
+        for _, obj in _walk_json(cand, False, by_id, set()):
+            if obj is not cand and is_candidate(obj):
+                nested.add(id(obj))
+
+    units: list[ParsedUnit] = []
+    for cand in qualified:
+        if id(cand) in nested:
+            continue
+        unit = ParsedUnit(
+            name=(cand.get("name") or "").strip(),
+            bs_id=cand.get("id", ""),
+            entry_type=cand.get("type", ""),
+            faction=faction,
+        )
+        for c in cand.get("costs", []) or []:
+            cname = (c.get("name") or "").strip()
+            try:
+                val = float(c.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if cname and (val or cname in game.points_cost_names):
+                unit.costs[cname] = val
+        for ckey, obj in subtrees[id(cand)]:
+            if "typeName" in obj:   # profile — jedyne dicty z typeName
+                chars = {
+                    ch.get("name", "?"): (ch.get("$text") or "").strip()
+                    for ch in obj.get("characteristics", []) or []
+                }
+                unit.profiles.append({
+                    "type": obj.get("typeName", ""), "name": obj.get("name", ""),
+                    "kind": classify_profile(obj.get("typeName", ""), game),
+                    "chars": chars,
+                })
+            elif ckey == "categoryLinks":
+                if obj.get("name"):
+                    unit.categories.append(obj["name"])
+            elif ckey == "rules":
+                desc = obj.get("description")
+                if isinstance(desc, dict):
+                    desc = desc.get("$text")
+                unit.rules.append({
+                    "name": obj.get("name", ""),
+                    "description": desc.strip() if isinstance(desc, str) else "",
                 })
         units.append(unit)
 
