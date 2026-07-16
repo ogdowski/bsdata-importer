@@ -1,64 +1,64 @@
 # bsdata-importer
 
-Importer danych o jednostkach do apek wargamingowych. Trzy źródła: repozytoria BSData (staty, koszty, keywordy), scrapowany oficjalny MFM 40k (punkty szybciej niż aktualizacje .cat) oraz PDF-y (MFM / Balance Dataslate / rozmiary baz). Wynik ląduje w SQLite (`data.db`), z eksportem do JSON.
+Unit data importer for wargaming apps. Three sources: BSData repositories (stats, costs, keywords), the scraped official 40k MFM (points land faster than `.cat` updates) and PDFs (MFM / Balance Dataslate / base size guides). Results go into SQLite (`data.db`), with JSON export.
 
-## Instalacja
+## Installation
 
-Jako paczka w projekcie (warscore, unitle, pilezero, …):
+As a package in a project (warscore, unitle, pilezero, …):
 
 ```bash
 pip install "bsdata-importer @ git+https://github.com/ogdowski/bsdata-importer.git"
-# z parserem PDF (pdfplumber):
+# with the PDF parser (pdfplumber):
 pip install "bsdata-importer[pdf] @ git+https://github.com/ogdowski/bsdata-importer.git"
 ```
 
-albo wpis w `requirements.txt` / `pyproject.toml` projektu:
+or an entry in the project's `requirements.txt` / `pyproject.toml`:
 
 ```
 bsdata-importer @ git+https://github.com/ogdowski/bsdata-importer.git
 ```
 
-Po instalacji dostępna jest komenda `bsdata-importer` (zamiennie z `python bsdata_importer.py` z checkoutu). Pliki `games.json` i `import_config.json` skrypt czyta z bieżącego katalogu projektu, a dopiero potem spod własnej lokalizacji — każda apka może więc mieć własną konfigurację importu.
+After installation the `bsdata-importer` command is available (interchangeable with `python bsdata_importer.py` from a checkout). The script reads `games.json` and `import_config.json` from the current project directory first, then from its own location — so every app can carry its own import configuration.
 
-Moduł da się też importować bezpośrednio: `from bsdata_importer import load_games, parse_catalogue, ...`.
+The module can also be imported directly: `from bsdata_importer import load_games, parse_catalogue, ...`.
 
-## Obsługiwane gry (wbudowane)
+## Supported games (built-in)
 
-| klucz | gra | repo |
+| key | game | repo |
 |---|---|---|
-| `40k` | Warhammer 40,000 (11th) | BSData/wh40k-11e (format JSON!) |
+| `40k` | Warhammer 40,000 (11th) | BSData/wh40k-11e (JSON format!) |
 | `40k-10e` | Warhammer 40,000 (10th) | BSData/wh40k-10e |
 | `aos` | Age of Sigmar (4th) | BSData/age-of-sigmar-4th |
 | `heresy` | Horus Heresy (3rd) | BSData/horus-heresy-3rd-edition |
 | `heresy-2e` | Horus Heresy (2nd) | BSData/horus-heresy-2nd-edition |
 | `killteam` | Kill Team | BSData/wh40k-killteam (branch `master`) |
-| `oldworld` | The Old World | Birddie721/TOW (BSData nie hostuje TOW; to community repo) |
+| `oldworld` | The Old World | Birddie721/TOW (BSData does not host TOW; community repo) |
 
-## Typowy workflow
+## Typical workflow
 
 ```bash
-python bsdata_importer.py fetch 40k          # staty + koszty z BSData
-python bsdata_importer.py mfm-live           # aktualne punkty 40k (scrap oficjalnego MFM)
+python bsdata_importer.py fetch 40k          # stats + costs from BSData
+python bsdata_importer.py mfm-live           # current 40k points (scraped official MFM)
 python bsdata_importer.py pdf dataslate.pdf --game 40k --kind points --source ds-2026-06
-python bsdata_importer.py pdf bazy.pdf --game 40k --kind bases
-python bsdata_importer.py apply-points 40k   # fuzzy merge punktów/baz do jednostek
+python bsdata_importer.py pdf bases.pdf --game 40k --kind bases
+python bsdata_importer.py apply-points 40k   # fuzzy-merge points/bases into units
 python bsdata_importer.py export --game 40k -o 40k.json
 ```
 
-### Filtry eksportu
+### Export filters
 
 ```bash
 python bsdata_importer.py export --game aos --dedupe --no-legends -o aos.json
 python bsdata_importer.py export --game 40k --no-legends --exclude "path to glory" --exclude "spearhead"
 ```
 
-`--no-legends` wycina jednostki oznaczone jako Legends: keyword `Legends` (AoS), katalogi `[LEGENDS]`/`(Legends)` oraz flagę `legends: true` z MFM (propagowaną do jednostek przy `apply-points`). `--exclude WZORZEC` (wielokrotny, case-insensitive) filtruje po fragmencie nazwy frakcji lub keywordu — BSData nie ma uniwersalnego znacznika "narrative", więc treści narracyjne wycinasz wzorcem pasującym do danej gry. Każdy filtr wypisuje ile usunął, więc od razu widać czy wzorzec trafił.
+`--no-legends` drops units marked as Legends: the `Legends` keyword (AoS), `[LEGENDS]`/`(Legends)` catalogues and the `legends: true` flag from the MFM (propagated onto units by `apply-points`). `--exclude PATTERN` (repeatable, case-insensitive) filters by a fragment of the faction name or a keyword — BSData has no universal "narrative" marker, so you cut narrative content with a pattern that fits the given game. Every filter prints how much it removed, so you immediately see whether the pattern hit.
 
-`apply-points` nadpisuje `points_current` najświeższym źródłem (fuzzy matching nazw, próg 0.87, normalizacja diakrytyków). Oryginalny koszt z bsdata zostaje w `costs.pts`, więc zawsze widać różnicę bsdata vs MFM/dataslate.
+`apply-points` overwrites `points_current` with the freshest source (fuzzy name matching, 0.87 cutoff, diacritics normalized). The original bsdata cost stays in `costs.pts`, so the bsdata vs MFM/dataslate difference is always visible.
 
-## Co importować — import_config.json
+## What to import — import_config.json
 
-Zamiast flag CLI: plik JSON z parametrami true/false per kategoria (`keywords`, `weapons`, `abilities`, `stats`, `costs`). Sekcja `default` plus nadpisania per gra; brak klucza = importuj. Skrypt automatycznie czyta `import_config.json` obok siebie, albo wskaż inny plik przez `--config` (działa na `fetch` i `export`).
+Instead of CLI flags: a JSON file with true/false switches per category (`keywords`, `weapons`, `abilities`, `stats`, `costs`). A `default` section plus per-game overrides; a missing key means import. The script automatically reads `import_config.json` next to itself, or point to another file with `--config` (works for `fetch` and `export`).
 
 ```json
 {
@@ -67,11 +67,11 @@ Zamiast flag CLI: plik JSON z parametrami true/false per kategoria (`keywords`, 
 }
 ```
 
-Dopuszczalny też płaski format: `{ "weapons": false }`.
+A flat format is also accepted: `{ "weapons": false }`.
 
-## Dodawanie nowej gry
+## Adding a new game
 
-Plik `games.json` obok skryptu — zero zmian w kodzie:
+A `games.json` file next to the script — zero code changes:
 
 ```json
 {
@@ -85,10 +85,9 @@ Plik `games.json` obok skryptu — zero zmian w kodzie:
 }
 ```
 
-## API programistyczne (rich parser)
+## Programmatic API (rich parser)
 
-Dla aplikacji, które budują własny model jednostki (np. Unitle), moduł
-wystawia bogatszą warstwę parsowania niż CLI:
+For apps that build their own unit model (e.g. Unitle), the module exposes a richer parsing layer than the CLI:
 
 ```python
 from bsdata_importer import (
@@ -96,35 +95,36 @@ from bsdata_importer import (
     index_by_id, resolve_subtree,
 )
 
-sha = resolve_head("BSData/wh40k-killteam", "master")   # przypięcie importu
-repo_dir = fetch_repo_dir("BSData/wh40k-killteam", sha, workdir)  # cache po sha
+sha = resolve_head("BSData/wh40k-killteam", "master")   # pin the import
+repo_dir = fetch_repo_dir("BSData/wh40k-killteam", sha, workdir)  # cached by sha
 
 game = BUILTIN_GAMES["killteam"]
 xml = (repo_dir / "2024 - Death Korps.cat").read_bytes()
 team, units = parse_catalogue_rich(xml, game, qualify_profile_type="Operative")
 ```
 
-`parse_catalogue_rich` różni się od `parse_catalogue` tym, że:
+`parse_catalogue_rich` differs from `parse_catalogue` in that:
 
-- profile, kategorie i **rules** (`unit.rules`, np. `<rule name="Base Size">`
-  w AoS) zbiera z poddrzewa **rozwiązanego** przez `entryLink`/`infoLink`
-  w obrębie pliku — bez tego profile podpinane linkami (pliki Library) są
-  niewidoczne;
-- parametr `qualify_profile_type` kwalifikuje wpis jako jednostkę tylko wtedy,
-  gdy rozwiązane poddrzewo ma profil o danym `typeName` (np. `"Unit"` w 40k/AoS,
-  `"Operative"` w Kill Team);
-- wpisy zagnieżdżone w innym kandydacie odpadają (sub-modele jednostek);
-- kategorie mogą zawierać duplikaty (efekt linków) — konsument robi z nich zbiór.
+- profiles, categories and **rules** (`unit.rules`, e.g. `<rule name="Base Size">`
+  in AoS) are collected from the subtree **resolved** through `entryLink`/`infoLink`
+  within the file — without this, profiles attached via links (Library files)
+  are invisible;
+- the `qualify_profile_type` parameter qualifies an entry as a unit only when
+  the resolved subtree contains a profile with the given `typeName` (e.g.
+  `"Unit"` in 40k/AoS, `"Operative"` in Kill Team);
+- entries nested inside another candidate are dropped (unit sub-models);
+- categories may contain duplicates (an artifact of links) — the consumer
+  turns them into a set.
 
-Selekcja jednostek (whitelisty, scalanie duplikatów, mapowanie frakcji,
-rozmiary baz z zewnętrznych tabel) celowo NIE wchodzi do paczki — to decyzje
-produktowe aplikacji.
+Unit selection (whitelists, duplicate merging, faction mapping, base sizes
+from external tables) deliberately does NOT go into the package — those are
+product decisions of the app.
 
-## Uwagi techniczne
+## Technical notes
 
-- Pobieranie idzie przez `codeload.github.com` (tarball całego repo) — jeden request, brak limitów GitHub API.
-- Parser XML jest namespace-agnostyczny i czyta `.cat`, `.gst` oraz spakowane `.catz`/`.gstz`. Dla 11e BSData przeszło na JSON — parser wykrywa format po rozszerzeniu.
-- Punkty 40k: repo `BSData/wh40k-11e-mfm` codziennie scrapuje `mfm.warhammer-community.com` do YAML (jednostki + enhancementy per detachment), więc dla 40k zwykle nie musisz parsować PDF-a. Parser PDF przydaje się dla Heresy, TOW i lokalnych dataslate'ów.
-- Kill Team (edycja 2024) nie używa punktów — tabela `units` i tak dostaje profile operatywów.
-- Parser CLI (`parse_catalogue`) nie rozwiązuje `entryLinks`/`infoLinks` (jednostki współdzielone przez Library i tak są w plikach Library, więc pokrycie jest pełne — ale bez dziedziczenia modyfikatorów). `parse_catalogue_rich` rozwiązuje linki w obrębie pliku.
-- XML parsowany przez `defusedxml` (pliki przychodzą z zewnętrznych repo — ochrona przed XXE/billion-laughs).
+- Downloads go through `codeload.github.com` (tarball of the whole repo) — one request, no GitHub API limits.
+- The XML parser is namespace-agnostic and reads `.cat`, `.gst` and zipped `.catz`/`.gstz`. For 11e BSData switched to JSON — the parser detects the format by extension.
+- 40k points: the `BSData/wh40k-11e-mfm` repo scrapes `mfm.warhammer-community.com` into YAML daily (units + enhancements per detachment), so for 40k you usually don't need to parse a PDF. The PDF parser is useful for Heresy, TOW and local dataslates.
+- Kill Team (2024 edition) doesn't use points — the `units` table still gets operative profiles.
+- The CLI parser (`parse_catalogue`) does not resolve `entryLinks`/`infoLinks` (units shared via Library are present in the Library files anyway, so coverage is complete — but without modifier inheritance). `parse_catalogue_rich` resolves links within a file.
+- XML is parsed with `defusedxml` (files come from external repos — protection against XXE/billion-laughs).
