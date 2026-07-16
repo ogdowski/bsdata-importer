@@ -30,15 +30,17 @@ import re
 import sqlite3
 import sys
 import tarfile
+import tempfile
 import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from xml.etree import ElementTree as ET
 
+import defusedxml.ElementTree as ET  # .cat to XML z zewnętrznych repo
 import requests
+from xml.etree.ElementTree import ParseError  # defusedxml rzuca ten sam typ
 
 __version__ = "0.1.0"
 
@@ -114,12 +116,42 @@ def load_games(config_path: Path | None = None) -> dict[str, Game]:
 # ---------------------------------------------------------------------------
 
 
-def download_repo_tarball(repo: str, branch: str) -> tarfile.TarFile:
-    url = f"https://codeload.github.com/{repo}/tar.gz/refs/heads/{branch}"
+def download_repo_tarball(repo: str, ref: str) -> tarfile.TarFile:
+    """ref: nazwa gałęzi albo sha commita — codeload obsługuje oba."""
+    url = f"https://codeload.github.com/{repo}/tar.gz/{ref}"
     print(f"  ↓ {url}")
     r = requests.get(url, timeout=120)
     r.raise_for_status()
     return tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz")
+
+
+def resolve_head(repo: str, branch: str = "main") -> str:
+    """Sha HEAD gałęzi — do przypinania importu do konkretnego commita."""
+    r = requests.get(
+        f"https://api.github.com/repos/{repo}/commits/{branch}",
+        headers={"Accept": "application/vnd.github+json"}, timeout=30)
+    r.raise_for_status()
+    return r.json()["sha"]
+
+
+def fetch_repo_dir(repo: str, ref: str, dest_dir: Path) -> Path:
+    """Tarball repo rozpakowany na dysk; cache po ref (katalog już istnieje =
+    nic nie pobieramy). Dla aplikacji, które parsują pliki wielokrotnie
+    (pliki siostrzane, suplementy) zamiast jednego przebiegu po tarballu."""
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    extracted = dest_dir / f"{repo.split('/')[1]}-{ref}"
+    if extracted.exists():
+        return extracted
+    tar = download_repo_tarball(repo, ref)
+    with tempfile.TemporaryDirectory(dir=dest_dir) as tmp:
+        tmp_path = Path(tmp)
+        tar.extractall(tmp_path, filter="data")
+        roots = [p for p in tmp_path.iterdir() if p.is_dir()]
+        if len(roots) != 1:
+            raise RuntimeError(f"unexpected tarball layout: {roots}")
+        roots[0].rename(extracted)
+    return extracted
 
 
 def iter_catalogue_files(tar: tarfile.TarFile):
@@ -181,6 +213,7 @@ class ParsedUnit:
     costs: dict = field(default_factory=dict)
     profiles: list = field(default_factory=list)   # [{type, name, chars{}}]
     categories: list = field(default_factory=list)
+    rules: list = field(default_factory=list)      # [{name, description}] (rich)
 
 
 def parse_catalogue(xml_bytes: bytes, game: Game) -> tuple[str, list[ParsedUnit]]:
@@ -225,6 +258,114 @@ def parse_catalogue(xml_bytes: bytes, game: Game) -> tuple[str, list[ParsedUnit]
         cats_el = _find(se, "categoryLinks")
         if cats_el is not None:
             unit.categories = [c.get("name", "") for c in _children(cats_el, "categoryLink")]
+        units.append(unit)
+
+    return faction, units
+
+
+def index_by_id(root) -> dict:
+    """Indeks id -> element dla całego katalogu (cele entry/info linków)."""
+    return {el.get("id"): el for el in root.iter() if el.get("id")}
+
+
+def resolve_subtree(entry, by_id: dict) -> list:
+    """Elementy poddrzewa wpisu WRAZ z celami entryLink/infoLink (cycle-safe).
+    BSData podpina profile/kategorie przez linki (zwłaszcza pliki Library) —
+    bez rozwiązania linków część danych jednostki jest niewidoczna."""
+    seen, stack, out = set(), [entry], []
+    while stack:
+        el = stack.pop()
+        if id(el) in seen:
+            continue
+        seen.add(id(el))
+        out.append(el)
+        for child in el:
+            stack.append(child)
+        if _tag(el) in ("infoLink", "entryLink"):
+            target = by_id.get(el.get("targetId"))
+            if target is not None:
+                stack.append(target)
+    return out
+
+
+def parse_catalogue_rich(
+    xml_bytes: bytes, game: Game, *, qualify_profile_type: str | None = None,
+) -> tuple[str, list[ParsedUnit]]:
+    """Jak parse_catalogue, ale dla aplikacji potrzebujących pełnego obrazu
+    jednostki:
+      - profile / kategorie / rules zbierane z poddrzewa ROZWIĄZANEGO przez
+        entryLink/infoLink,
+      - kandydat kwalifikuje się tylko, gdy rozwiązane poddrzewo zawiera
+        profil o typeName == qualify_profile_type (None = bez kwalifikacji),
+      - wpisy zagnieżdżone w innym kandydacie odpadają (sub-modele),
+      - rules lądują w unit.rules (np. '<rule name="Base Size">' w AoS).
+    Kategorie mogą się powtarzać (linki) — konsument robi z nich zbiór."""
+    root = ET.fromstring(xml_bytes)
+    faction = root.get("name", "?")
+    by_id = index_by_id(root)
+
+    candidates, subtrees = [], {}
+    for se in root.iter():
+        if _tag(se) != "selectionEntry" or se.get("type") not in game.unit_types:
+            continue
+        elements = resolve_subtree(se, by_id)
+        if qualify_profile_type is not None and not any(
+            _tag(el) == "profile" and el.get("typeName") == qualify_profile_type
+            for el in elements
+        ):
+            continue
+        candidates.append(se)
+        subtrees[id(se)] = elements
+
+    nested = set()
+    for cand in candidates:
+        for el in cand.iter():
+            if el is not cand and _tag(el) == "selectionEntry":
+                nested.add(id(el))
+
+    units: list[ParsedUnit] = []
+    for se in candidates:
+        if id(se) in nested:
+            continue
+        unit = ParsedUnit(
+            name=(se.get("name") or "").strip(),
+            bs_id=se.get("id", ""),
+            entry_type=se.get("type", ""),
+            faction=faction,
+        )
+        costs_el = _find(se, "costs")
+        if costs_el is not None:
+            for c in _children(costs_el, "cost"):
+                try:
+                    val = float(c.get("value", "0"))
+                except ValueError:
+                    continue
+                cname = (c.get("name") or "").strip()
+                if cname and (val or cname in game.points_cost_names):
+                    unit.costs[cname] = val
+        for el in subtrees[id(se)]:
+            t = _tag(el)
+            if t == "profile":
+                chars = {}
+                chs = _find(el, "characteristics")
+                if chs is not None:
+                    for ch in _children(chs, "characteristic"):
+                        chars[ch.get("name", "?")] = (ch.text or "").strip()
+                unit.profiles.append({
+                    "type": el.get("typeName", ""), "name": el.get("name", ""),
+                    "kind": classify_profile(el.get("typeName", ""), game),
+                    "chars": chars,
+                })
+            elif t == "categoryLink":
+                if el.get("name"):
+                    unit.categories.append(el.get("name"))
+            elif t == "rule":
+                desc = _find(el, "description")
+                unit.rules.append({
+                    "name": el.get("name", ""),
+                    "description": ((desc.text or "").strip()
+                                    if desc is not None else ""),
+                })
         units.append(unit)
 
     return faction, units
@@ -388,7 +529,7 @@ def cmd_fetch(args, games):
                 faction, units = parse_catalogue_json(blob, game)
             else:
                 faction, units = parse_catalogue(blob, game)
-        except (ET.ParseError, json.JSONDecodeError) as e:
+        except (ParseError, json.JSONDecodeError) as e:
             print(f"  ! pomijam {fname}: {e}")
             continue
         n_files += 1

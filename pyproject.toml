@@ -11,6 +11,7 @@ requires-python = ">=3.9"
 dependencies = [
     "requests",
     "pyyaml",
+    "defusedxml",
 ]
 
 [project.optional-dependencies]

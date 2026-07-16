@@ -85,10 +85,46 @@ Plik `games.json` obok skryptu — zero zmian w kodzie:
 }
 ```
 
+## API programistyczne (rich parser)
+
+Dla aplikacji, które budują własny model jednostki (np. Unitle), moduł
+wystawia bogatszą warstwę parsowania niż CLI:
+
+```python
+from bsdata_importer import (
+    BUILTIN_GAMES, parse_catalogue_rich, resolve_head, fetch_repo_dir,
+    index_by_id, resolve_subtree,
+)
+
+sha = resolve_head("BSData/wh40k-killteam", "master")   # przypięcie importu
+repo_dir = fetch_repo_dir("BSData/wh40k-killteam", sha, workdir)  # cache po sha
+
+game = BUILTIN_GAMES["killteam"]
+xml = (repo_dir / "2024 - Death Korps.cat").read_bytes()
+team, units = parse_catalogue_rich(xml, game, qualify_profile_type="Operative")
+```
+
+`parse_catalogue_rich` różni się od `parse_catalogue` tym, że:
+
+- profile, kategorie i **rules** (`unit.rules`, np. `<rule name="Base Size">`
+  w AoS) zbiera z poddrzewa **rozwiązanego** przez `entryLink`/`infoLink`
+  w obrębie pliku — bez tego profile podpinane linkami (pliki Library) są
+  niewidoczne;
+- parametr `qualify_profile_type` kwalifikuje wpis jako jednostkę tylko wtedy,
+  gdy rozwiązane poddrzewo ma profil o danym `typeName` (np. `"Unit"` w 40k/AoS,
+  `"Operative"` w Kill Team);
+- wpisy zagnieżdżone w innym kandydacie odpadają (sub-modele jednostek);
+- kategorie mogą zawierać duplikaty (efekt linków) — konsument robi z nich zbiór.
+
+Selekcja jednostek (whitelisty, scalanie duplikatów, mapowanie frakcji,
+rozmiary baz z zewnętrznych tabel) celowo NIE wchodzi do paczki — to decyzje
+produktowe aplikacji.
+
 ## Uwagi techniczne
 
 - Pobieranie idzie przez `codeload.github.com` (tarball całego repo) — jeden request, brak limitów GitHub API.
 - Parser XML jest namespace-agnostyczny i czyta `.cat`, `.gst` oraz spakowane `.catz`/`.gstz`. Dla 11e BSData przeszło na JSON — parser wykrywa format po rozszerzeniu.
 - Punkty 40k: repo `BSData/wh40k-11e-mfm` codziennie scrapuje `mfm.warhammer-community.com` do YAML (jednostki + enhancementy per detachment), więc dla 40k zwykle nie musisz parsować PDF-a. Parser PDF przydaje się dla Heresy, TOW i lokalnych dataslate'ów.
 - Kill Team (edycja 2024) nie używa punktów — tabela `units` i tak dostaje profile operatywów.
-- Parser nie rozwiązuje `entryLinks`/`infoLinks` między katalogami (jednostki współdzielone przez Library i tak są w plikach Library, więc pokrycie jest pełne — ale bez dziedziczenia modyfikatorów).
+- Parser CLI (`parse_catalogue`) nie rozwiązuje `entryLinks`/`infoLinks` (jednostki współdzielone przez Library i tak są w plikach Library, więc pokrycie jest pełne — ale bez dziedziczenia modyfikatorów). `parse_catalogue_rich` rozwiązuje linki w obrębie pliku.
+- XML parsowany przez `defusedxml` (pliki przychodzą z zewnętrznych repo — ochrona przed XXE/billion-laughs).
