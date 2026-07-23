@@ -134,6 +134,26 @@ def resolve_head(repo: str, branch: str = "main") -> str:
     return r.json()["sha"]
 
 
+def _extract_data_tar(tar: tarfile.TarFile, destination: Path) -> None:
+    """Extract a source tarball without allowing links or path traversal."""
+    destination = destination.resolve()
+    for member in tar.getmembers():
+        if not (member.isfile() or member.isdir()):
+            raise RuntimeError(f"unsupported tar member: {member.name}")
+        target = (destination / member.name).resolve()
+        try:
+            target.relative_to(destination)
+        except ValueError as exc:
+            raise RuntimeError(f"unsafe tar member path: {member.name}") from exc
+
+    try:
+        tar.extractall(destination, filter="data")
+    except TypeError:
+        # Python 3.9-3.11 do not support extraction filters. The validation
+        # above provides the relevant safety guarantees for source tarballs.
+        tar.extractall(destination)
+
+
 def fetch_repo_dir(repo: str, ref: str, dest_dir: Path) -> Path:
     """Tarball repo rozpakowany na dysk; cache po ref (katalog już istnieje =
     nic nie pobieramy). Dla aplikacji, które parsują pliki wielokrotnie
@@ -146,7 +166,7 @@ def fetch_repo_dir(repo: str, ref: str, dest_dir: Path) -> Path:
     tar = download_repo_tarball(repo, ref)
     with tempfile.TemporaryDirectory(dir=dest_dir) as tmp:
         tmp_path = Path(tmp)
-        tar.extractall(tmp_path, filter="data")
+        _extract_data_tar(tar, tmp_path)
         roots = [p for p in tmp_path.iterdir() if p.is_dir()]
         if len(roots) != 1:
             raise RuntimeError(f"unexpected tarball layout: {roots}")

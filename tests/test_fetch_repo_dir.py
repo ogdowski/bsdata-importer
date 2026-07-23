@@ -2,6 +2,7 @@ import io
 import tarfile
 
 import bsdata_importer
+import pytest
 from bsdata_importer import fetch_repo_dir
 
 
@@ -48,3 +49,22 @@ def test_fetch_repo_dir_multi_ref_coexistence_and_cache(tmp_path, monkeypatch):
     # ponowne pobranie znanego ref trafia w cache, nie w sieć
     assert fetch_repo_dir(repo, "aaa", dest_dir) == path_aaa
     assert len(calls) == 2
+
+
+def test_fetch_repo_dir_rejects_path_traversal(tmp_path, monkeypatch):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(name="../outside.txt")
+        info.size = 3
+        tar.addfile(info, io.BytesIO(b"bad"))
+
+    monkeypatch.setattr(
+        bsdata_importer.requests,
+        "get",
+        lambda url, timeout=None: _FakeResponse(buf.getvalue()),
+    )
+
+    with pytest.raises(RuntimeError, match="unsafe tar member path"):
+        fetch_repo_dir("BSData/wh40k-10e", "unsafe", tmp_path / "cache")
+
+    assert not (tmp_path / "outside.txt").exists()
